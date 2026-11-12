@@ -247,6 +247,97 @@ _add(
 )
 
 
+# ---------------------------------------------------------- per-tick CPU relief
+#
+# Every row here was checked against a Deadlock convar dump (build 11211860,
+# Nov 2026) rather than against a guide. They are the convars that stop work the
+# *client* would otherwise do every tick: stepping dormant entities, simulating
+# ragdolls and debris, spawning particle systems one at a time, updating a light
+# for each effect, and decoding snapshots on the main thread.
+#
+# Deliberately absent: everything ``ai_*`` (server-only, see the module
+# docstring of ``speedylock.cpu``), ``cl_particle_simulate`` and
+# ``cl_disable_ragdolls`` (cheat-flagged, inert in a live match), and
+# ``particle_cluster_nodraw`` / ``cl_impacteffects`` (they do save work, but they
+# remove information you use to fight).
+
+_add(
+    _c(
+        "cl_simulate_dormant_entities",
+        Status.VERIFIED,
+        None,
+        "Whether the client keeps stepping entities the server has marked "
+        "dormant. 0 stops that tick cost. Dormant entities are not drawn, so "
+        "nothing visible changes -- but the rest of the map is still simulated "
+        "on the server, which no client convar can change.",
+    ),
+    _c(
+        "cl_phys_animated_hierarchy",
+        Status.VERIFIED,
+        None,
+        "Physics for animated prop hierarchies. 0 skips physics work for props "
+        "that are animated rather than simulated; they stop reacting physically "
+        "but stay put.",
+    ),
+    _c(
+        "phys_multithreading_enabled",
+        Status.VERIFIED,
+        "1",
+        "Run VPhysics on job threads instead of the main thread. Normally already "
+        "on in modern builds, so writing 1 is insurance rather than a win.",
+    ),
+    _c(
+        "cl_parallel_readpacketentities",
+        Status.VERIFIED,
+        None,
+        "Decode incoming entity snapshots on worker threads. Only engages when "
+        "the server sends bit counts, so on some servers it is a no-op.",
+    ),
+    _c(
+        "cl_aggregate_particles",
+        Status.VERIFIED,
+        None,
+        "Batch particle systems into shared draw and simulation work instead of "
+        "handling each one separately.",
+    ),
+    _c(
+        "cl_particle_batch_mode",
+        Status.VERIFIED,
+        None,
+        "Batched particle mode. Pairs with cl_aggregate_particles.",
+    ),
+    _c(
+        "cl_particle_fallback_base",
+        Status.VERIFIED,
+        None,
+        "Base value for falling back to cheaper effects when the particle budget "
+        "is exceeded. This is the same value SpeedyLock's video profiles write to "
+        "setting.cl_particle_fallback_base, so autoexec and video.txt agree.",
+    ),
+    _c(
+        "cl_particle_fallback_multiplier",
+        Status.VERIFIED,
+        None,
+        "Multiplier for that fallback. See cl_particle_fallback_base.",
+    ),
+    _c(
+        "cl_particle_sim_fallback_threshold_ms",
+        Status.VERIFIED,
+        None,
+        "Simulation time that may elapse before new particle systems start "
+        "falling back to cheaper versions. 0 falls back immediately.",
+    ),
+    _c(
+        "r_citadel_disable_particle_lights",
+        Status.VERIFIED,
+        "false",
+        "Disable the dynamic light each particle effect asks for, unless the "
+        "effect overrides it. Deadlock's own description: 'Disable particle "
+        "lights except when explicitly overriden in particle renderer ops.'",
+    ),
+)
+
+
 _DOCUMENTED_BLURB = (
     "Ships in OptiLock's published configs (GPL-3.0). A real convar that "
     "competitive players run, but SpeedyLock has not independently verified "

@@ -186,6 +186,11 @@ def advice(result):
             "Use --profile potato: it zeroes ragdolls and breakable debris, which "
             "are the simulation costs charged per tick."
         )
+        lines.append(
+            "Add --cpu-relief: it stops the client stepping dormant entities, "
+            "batches particle work, and moves physics and snapshot reads onto "
+            "worker threads. `speedy cpu` lists exactly what it writes."
+        )
         lines.append("Add -high to launch options for CPU scheduling headroom.")
     elif verdict == "mixed":
         lines.append(
@@ -223,6 +228,8 @@ def install_command(result, profile="balanced", game_dir=None):
     ]
     if result["verdict"] == "gpu" and result["render_scale"]:
         parts.append("--render-scale %.2f" % result["render_scale"])
+    if result["verdict"] == "cpu":
+        parts.append("--cpu-relief")
     if game_dir:
         parts.append('--game-dir "%s"' % game_dir)
     return " ".join(parts)

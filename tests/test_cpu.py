@@ -1,0 +1,166 @@
+"""Tests for the opt-in CPU relief overlay."""
+
+import argparse
+import contextlib
+import io
+import unittest
+
+from speedylock import cli, config, convars, cpu, profiles, tune
+
+
+class ReliefDataTests(unittest.TestCase):
+    def test_every_row_is_a_writable_convar(self):
+        for row in cpu.RELIEF:
+            cvar = convars.get(row.name)
+            self.assertIsNotNone(cvar, row.name)
+            self.assertTrue(cvar.is_writable(), row.name)
+
+    def test_names_are_unique(self):
+        names = cpu.names()
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_rows_carry_a_group_and_a_reason(self):
+        labels = dict(cpu.GROUP_LABELS)
+        for row in cpu.RELIEF:
+            self.assertIn(row.group, labels, row.name)
+            self.assertTrue(row.note, row.name)
+
+    def test_grouping_covers_every_row_once(self):
+        grouped = [row for _label, rows in cpu.by_group() for row in rows]
+        self.assertEqual(len(grouped), len(cpu.RELIEF))
+
+    def test_server_side_convars_are_not_written(self):
+        written = set(cpu.names())
+        for name in (
+            "ai_lod_auto_enabled",
+            "ai_think_interval_lod_med",
+            "ai_think_interval_lod_very_low",
+            "ai_use_async_ragdoll_fixup",
+            "g_ragdoll_important_maxcount",
+            "cl_disable_ragdolls",
+        ):
+            self.assertNotIn(name, written, name)
+
+    def test_not_written_entries_are_not_duplicated_in_relief(self):
+        written = set(cpu.names())
+        for name, why in cpu.NOT_WRITTEN:
+            self.assertNotIn(name, written, name)
+            self.assertTrue(why, name)
+
+
+class OverlayTests(unittest.TestCase):
+    def setUp(self):
+        self.base = profiles.get("balanced")
+
+    def test_key_and_title_mark_the_overlay(self):
+        layered = cpu.overlay(self.base)
+        self.assertEqual(layered.key, "balanced-cpu")
+        self.assertIn("CPU relief", layered.title)
+        self.assertTrue(cpu.is_relief_profile(layered.key))
+        self.assertEqual(cpu.base_key(layered.key), "balanced")
+
+    def test_plain_key_is_not_a_relief_profile(self):
+        self.assertFalse(cpu.is_relief_profile("balanced"))
+        self.assertFalse(cpu.is_relief_profile(None))
+        self.assertEqual(cpu.base_key("balanced"), "balanced")
+
+    def test_base_profile_is_not_mutated(self):
+        before_settings = tuple(self.base.settings)
+        before_gameinfo = tuple(self.base.gameinfo)
+        cpu.overlay(self.base)
+        self.assertEqual(tuple(self.base.settings), before_settings)
+        self.assertEqual(tuple(self.base.gameinfo), before_gameinfo)
+        self.assertIs(profiles.get("balanced"), self.base)
+
+    def test_overlay_is_idempotent(self):
+        once = cpu.overlay(self.base)
+        twice = cpu.overlay(once)
+        self.assertEqual(once.settings, twice.settings)
+        self.assertEqual(once.gameinfo, twice.gameinfo)
+
+    def test_relief_rows_reach_both_files(self):
+        layered = cpu.overlay(self.base)
+        for target in (layered.settings, layered.gameinfo):
+            values = dict(target)
+            for name, value in cpu.values().items():
+                self.assertEqual(values[name], value)
+
+    def test_no_convar_is_defined_twice_after_overlay(self):
+        layered = cpu.overlay(self.base)
+        for target in (layered.settings, layered.gameinfo):
+            names = [name for name, _value in target]
+            self.assertEqual(len(names), len(set(names)))
+
+    def test_relief_overrides_a_profile_that_sets_the_same_name(self):
+        # potato already zeroes ragdolls; the overlay must own the name outright
+        layered = cpu.overlay(profiles.get("potato"))
+        names = [name for name, _value in layered.settings]
+        self.assertEqual(names.count("cl_ragdoll_limit"), 1)
+        self.assertEqual(dict(layered.settings)["cl_ragdoll_limit"], "0")
+
+    def test_overlay_drops_optilock_values_it_replaces(self):
+        layered = cpu.overlay(profiles.get("optilock"))
+        values = dict(layered.gameinfo)
+        # OptiLock sets this to -1; ours is last and wins, with no duplicate row
+        self.assertEqual(values["cl_ragdoll_limit"], "0")
+
+    def test_video_keys_are_untouched(self):
+        layered = cpu.overlay(self.base)
+        self.assertEqual(layered.video, self.base.video)
+
+    def test_block_renders(self):
+        layered = cpu.overlay(self.base)
+        block = config.render_block(layered, fps_cap=141)
+        self.assertIn('cl_simulate_dormant_entities "0"', block)
+        self.assertIn('r_citadel_disable_particle_lights "1"', block)
+        self.assertIn('fps_max "141"', block)
+
+    def test_still_explains_that_the_server_is_untouched(self):
+        text = " ".join(cpu.explain())
+        self.assertIn("server", text)
+
+
+class CliWiringTests(unittest.TestCase):
+    def test_flag_is_opt_in(self):
+        parser = cli.build_parser()
+        self.assertTrue(parser.parse_args(["install", "--cpu-relief"]).cpu_relief)
+        self.assertFalse(parser.parse_args(["install"]).cpu_relief)
+
+    def test_cpu_command_is_registered(self):
+        parser = cli.build_parser()
+        self.assertIs(parser.parse_args(["cpu"]).func, cli.cmd_cpu)
+
+    def test_cpu_command_reports_both_halves(self):
+        args = argparse.Namespace(profile=None)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            cli.cmd_cpu(args)
+        text = buffer.getvalue()
+        self.assertIn("cl_simulate_dormant_entities", text)
+        self.assertIn("ai_lod_auto_enabled", text)
+        self.assertIn("--cpu-relief", text)
+
+    def test_cpu_bound_recommendation_suggests_the_relief_set(self):
+        result = {
+            "verdict": "cpu",
+            "ratio": 0.4,
+            "cap": 120,
+            "render_scale": None,
+            "caps": {"stable": 120, "fast": 180, "tick": 120, "vrr": None, "refresh": None},
+        }
+        self.assertIn("--cpu-relief", " ".join(tune.advice(result)))
+        self.assertIn("--cpu-relief", tune.install_command(result, "potato"))
+
+    def test_gpu_bound_recommendation_does_not(self):
+        result = {
+            "verdict": "gpu",
+            "ratio": 0.99,
+            "cap": 120,
+            "render_scale": 0.83,
+            "caps": {"stable": 120, "fast": 180, "tick": 120, "vrr": None, "refresh": None},
+        }
+        self.assertNotIn("--cpu-relief", tune.install_command(result, "balanced"))
+
+
+if __name__ == "__main__":
+    unittest.main()

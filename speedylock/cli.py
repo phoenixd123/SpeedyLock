@@ -11,6 +11,7 @@ from . import (
     bench,
     config,
     convars,
+    cpu,
     detect,
     gamefiles,
     managers,
@@ -43,6 +44,13 @@ def _install_or_die(args, required):
 def _wants(args, target):
     only = getattr(args, "only", None)
     return not only or target in only
+
+
+def _with_relief(args, profile):
+    """Apply the opt-in CPU relief overlay, if it was asked for."""
+    if getattr(args, "cpu_relief", False):
+        return cpu.overlay(profile)
+    return profile
 
 
 def _resolve_video(profile, fps_cap):
@@ -168,19 +176,26 @@ def _print_launch(profile):
 def cmd_plan(args):
     install = _install_or_die(args, required=False)
     gpu = detect.gpu_name()
-    cpu = detect.cpu_name()
+    cpu_name = detect.cpu_name()
     key = args.profile or detect.guess_profile(gpu)
-    profile = profiles.get(key)
+    profile = _with_relief(args, profiles.get(key))
     video = _video_for(args, profile)
     gameinfo = _gameinfo_for(args, profile)
 
     _out("SpeedyLock %s -- plan (nothing written)" % __version__)
     _out()
-    _print_machine(install, gpu, cpu)
+    _print_machine(install, gpu, cpu_name)
     _out()
     _out("Profile: %s -- %s" % (profile.title, profile.blurb))
     if not args.profile:
         _out("  chosen automatically from your GPU; override with --profile")
+    if getattr(args, "cpu_relief", False):
+        _out("  + CPU relief: %d extra convars for per-tick client CPU" % len(cpu.RELIEF))
+    else:
+        _out(
+            "  [i] --cpu-relief adds %d convars that cut per-tick client CPU "
+            "(`speedy cpu` explains them)" % len(cpu.RELIEF)
+        )
     _out()
 
     _report_cvarlist(
@@ -257,7 +272,7 @@ def cmd_install(args):
     install = _install_or_die(args, required=True)
     cfg_dir = detect.cfg_dir(install)
     key = args.profile or detect.guess_profile(detect.gpu_name())
-    profile = profiles.get(key)
+    profile = _with_relief(args, profiles.get(key))
     video = _video_for(args, profile)
     gameinfo = _gameinfo_for(args, profile)
 
@@ -475,7 +490,13 @@ def _audit_autoexec(cfg_dir):
     if block is None:
         _out("[--] autoexec.cfg: no SpeedyLock block")
     else:
-        _out("[ok] autoexec.cfg: block present (profile: %s)" % config.block_profile(block))
+        installed = config.block_profile(block)
+        _out("[ok] autoexec.cfg: block present (profile: %s)" % installed)
+        if cpu.is_relief_profile(installed):
+            _out(
+                "     [i] CPU relief is in this block; `install --profile %s` "
+                "without --cpu-relief removes it" % cpu.base_key(installed)
+            )
 
     issues = 0
     names = []
@@ -708,7 +729,7 @@ def cmd_integrate(args):
     """Export the profile in the shape Grimoire and DMM understand."""
     install = _install_or_die(args, required=False)
     key = args.profile or detect.guess_profile(detect.gpu_name() if install else None)
-    profile = profiles.get(key)
+    profile = _with_relief(args, profiles.get(key))
 
     try:
         block = config.render_block(
@@ -834,6 +855,37 @@ def cmd_convar(args):
     return 0
 
 
+# ------------------------------------------------------------------------- cpu
+
+
+def cmd_cpu(args):
+    _out("SpeedyLock %s -- CPU relief" % __version__)
+    _out()
+    _out("Per-tick client work this set removes:")
+    _out()
+    for label, rows in cpu.by_group():
+        _out("  %s" % label)
+        for row in rows:
+            _out("    %-38s %-2s  %s" % (row.name, row.value, row.note))
+        _out()
+
+    _out("Sold as CPU tweaks, not written here:")
+    for name, why in cpu.NOT_WRITTEN:
+        _out("    %-38s %s" % (name, why))
+    _out()
+
+    for line in cpu.explain():
+        _out("  %s" % line)
+        _out()
+
+    _out("Apply:")
+    _out(
+        "  python speedy.py install --profile %s --cpu-relief"
+        % (args.profile or profiles.DEFAULT_PROFILE)
+    )
+    return 0
+
+
 # ----------------------------------------------------------------------- parser
 
 
@@ -872,6 +924,11 @@ def build_parser():
             type=float,
             metavar="0.5-1.0",
             help="opt-in: scale internal render resolution (for GPU-bound hardware)",
+        )
+        sub.add_argument(
+            "--cpu-relief",
+            action="store_true",
+            help="opt-in: also write the per-tick client CPU relief set (`speedy cpu`)",
         )
         if allow_dry_run:
             sub.add_argument("--dry-run", action="store_true", help="show, do not write")
@@ -925,6 +982,14 @@ def build_parser():
         "--out", help="output directory (default: dist/speedylock-<profile>)"
     )
     integrate.set_defaults(func=cmd_integrate)
+
+    cpu_parser = subparsers.add_parser(
+        "cpu", help="what per-tick CPU can be freed, and what cannot"
+    )
+    cpu_parser.add_argument(
+        "--profile", choices=profiles.names(), help="profile to describe the overlay for"
+    )
+    cpu_parser.set_defaults(func=cmd_cpu)
 
     convar_parser = subparsers.add_parser("convar", help="inspect the convar knowledge base")
     convar_parser.add_argument("name", nargs="?", help="convar to explain")

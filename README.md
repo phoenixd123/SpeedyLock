@@ -95,9 +95,10 @@ python speedy.py uninstall  # restore everything from backups
 | `bench <capture>` | Analyses a frametime export and recommends an fps cap |
 | `tune <capture>` | Diagnoses GPU- vs CPU-bound and applies the knobs that matter |
 | `convar [name]` | Explains a convar and whether SpeedyLock will write it |
+| `cpu` | What per-tick client CPU can be freed, and what cannot |
 
 Flags: `--game-dir`, `--profile`, `--fps-cap N`, `--only autoexec|video|gameinfo`
-(repeatable), `--dry-run`, `--experimental`, `--cvarlist PATH`.
+(repeatable), `--dry-run`, `--experimental`, `--cvarlist PATH`, `--cpu-relief`.
 
 ---
 
@@ -212,6 +213,71 @@ Dropping the flag later does **not** undo it, because SpeedyLock will not write 
 protected key it was not asked to write. It warns instead and tells you to pass
 `--render-scale 1.0` (or `uninstall`) to go back.
 
+
+---
+
+## Freeing CPU in a teamfight (`--cpu-relief`)
+
+Deadlock's client does not simulate the other two lanes — Valve's servers do. What
+your CPU is charged every tick is the work for entities the client already knows
+about, and a teamfight is when all of it arrives at once: particle systems and the
+dynamic light each effect asks for, ragdolls, breakable debris, props with physics,
+and decoding the snapshot that lands sixty times a second.
+
+`--cpu-relief` layers that set onto any profile, and writes it to **both**
+`autoexec.cfg` and the `gameinfo.gi` `ConVars` block, so a manager rewriting
+`video.txt` cannot undo it:
+
+| convar | value | what it stops |
+| --- | --- | --- |
+| `cl_simulate_dormant_entities` | `0` | stepping entities the server marked dormant |
+| `cl_ragdoll_limit` | `0` | ragdolls — each one is a simulated body |
+| `func_break_max_pieces` | `0` | debris physics from breakable props |
+| `cl_phys_animated_hierarchy` | `0` | physics on animated prop hierarchies |
+| `phys_multithreading_enabled` | `1` | keeps VPhysics on job threads |
+| `cl_parallel_readpacketentities` | `1` | decodes snapshots off the main thread |
+| `cl_aggregate_particles` | `1` | batches particle systems into shared work |
+| `cl_particle_batch_mode` | `1` | the batched particle path |
+| `cl_particle_fallback_base` / `_multiplier` | `5` / `5` | matches the video profiles instead of disagreeing with them |
+| `cl_particle_sim_fallback_threshold_ms` | `0` | falls back to cheaper effects immediately |
+| `r_citadel_disable_particle_lights` | `1` | one dynamic light per effect |
+
+```bash
+python speedy.py cpu                        # what it writes, and what it refuses to
+python speedy.py plan --cpu-relief          # see the diff first
+python speedy.py install --cpu-relief       # layer it on your profile
+```
+
+It is opt-in because it is visible under load: cheaper effects, no ragdolls, no
+debris. Re-running `install` without the flag removes it again, and `doctor` says
+which block you are running.
+
+### What it cannot do, and what other configs get wrong
+
+The other lanes are ticked on Valve's hardware. Nothing in a client config changes
+that, and a config that claims otherwise is describing the server's job.
+
+The `ai_*` convars are where this gets concrete. OptiLock ships
+`ai_lod_auto_enabled`, `ai_think_interval_lod_med`,
+`ai_think_interval_lod_very_low` and `ai_use_async_ragdoll_fixup`; Valve's own
+[Deadlock convar list](https://developer.valvesoftware.com/wiki/List_of_Deadlock_console_commands_and_variables)
+flags every one of them `sv`, i.e. server-side. A client `autoexec` cannot run
+them, so they free nothing on your machine. `speedy cpu` lists them rather than
+copying them, because running them and believing they worked is the failure mode
+this tool is built against.
+
+Four more that save real work and are still not written:
+
+| convar | why not |
+| --- | --- |
+| `cl_disable_ragdolls` | cheat-flagged: inert in a live match |
+| `cl_particle_simulate 0` | cheat-flagged, and it removes effects you need to read a fight |
+| `particle_cluster_nodraw`, `cl_impacteffects` | hide world effect clusters and bullet-impact feedback — that is information |
+| `panorama_min_comp_layer_cache_cost` | exists in Deadlock, undocumented; no guessed HUD values |
+
+If `speedy tune` says you are GPU-bound, skip this: cutting simulation does nothing
+when you are waiting on pixels. It is the CPU-bound branch of `tune` that suggests
+it, from your own capture rather than from a hunch.
 
 ---
 
