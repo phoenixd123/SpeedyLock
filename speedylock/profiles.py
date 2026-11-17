@@ -367,17 +367,32 @@ PROFILES.update(
 
 
 def get(key):
-    """Look up a profile by key, raising a helpful error for typos."""
+    """Look up a profile by key, raising a helpful error for typos.
+
+    ``<profile>-cpu`` resolves to that profile with the CPU relief overlay
+    applied, so the key ``doctor`` prints can be pasted straight back into
+    ``install``. The import is local because ``speedylock.cpu`` imports this
+    module at load time; calling into it here is safe by the time any lookup
+    happens.
+    """
     try:
         return PROFILES[key]
     except KeyError:
-        raise KeyError(
-            "unknown profile %r (choose from: %s)" % (key, ", ".join(sorted(PROFILES)))
-        )
+        pass
+
+    from . import cpu
+
+    base = cpu.base_key(key)
+    if base != key and base in PROFILES:
+        return cpu.overlay(PROFILES[base])
+    raise KeyError("unknown profile %r (choose from: %s)" % (key, ", ".join(names())))
 
 
 def names():
-    return sorted(PROFILES)
+    """Every key ``--profile`` accepts, including the relief variants."""
+    from . import cpu
+
+    return sorted(list(PROFILES) + [key + cpu.SUFFIX for key in PROFILES])
 
 
 def chooser_order():

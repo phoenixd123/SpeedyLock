@@ -189,7 +189,7 @@ def cmd_plan(args):
     _out("Profile: %s -- %s" % (profile.title, profile.blurb))
     if not args.profile:
         _out("  chosen automatically from your GPU; override with --profile")
-    if getattr(args, "cpu_relief", False):
+    if cpu.is_relief_profile(profile.key):
         _out("  + CPU relief: %d extra convars for per-tick client CPU" % len(cpu.RELIEF))
     else:
         _out(
@@ -866,7 +866,8 @@ def cmd_cpu(args):
     for label, rows in cpu.by_group():
         _out("  %s" % label)
         for row in rows:
-            _out("    %-38s %-2s  %s" % (row.name, row.value, row.note))
+            marker = "  (costs information)" if row.lossy else ""
+            _out("    %-38s %-2s  %s%s" % (row.name, row.value, row.note, marker))
         _out()
 
     _out("Sold as CPU tweaks, not written here:")

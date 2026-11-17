@@ -162,5 +162,109 @@ class CliWiringTests(unittest.TestCase):
         self.assertNotIn("--cpu-relief", tune.install_command(result, "balanced"))
 
 
+class HudReliefTests(unittest.TestCase):
+    def test_hud_rows_are_present(self):
+        values = cpu.values()
+        self.assertEqual(values["fps_max_ui"], "30")
+        self.assertEqual(values["citadel_damage_text_lifetime"], "0.75")
+        self.assertEqual(values["citadel_healthbars_enabled"], "0")
+
+    def test_hud_rows_are_grouped_as_hud(self):
+        labels = dict(cpu.GROUP_LABELS)
+        hud = [row.name for row in cpu.RELIEF if row.group == cpu.HUD]
+        self.assertEqual(
+            sorted(hud),
+            ["citadel_damage_text_lifetime", "citadel_healthbars_enabled", "fps_max_ui"],
+        )
+        self.assertIn(cpu.HUD, labels)
+
+    def test_grouping_includes_hud(self):
+        keys = [label for label, _rows in cpu.by_group()]
+        self.assertIn(dict(cpu.GROUP_LABELS)[cpu.HUD], keys)
+
+    def test_only_healthbars_is_lossy(self):
+        self.assertEqual(
+            [row.name for row in cpu.RELIEF if row.lossy], ["citadel_healthbars_enabled"]
+        )
+
+    def test_hud_values_replace_the_profile_value(self):
+        layered = cpu.overlay(profiles.get("balanced"))
+        names = [name for name, _value in layered.settings]
+        self.assertEqual(names.count("fps_max_ui"), 1)
+        self.assertEqual(dict(layered.settings)["fps_max_ui"], "30")
+        self.assertEqual(dict(layered.gameinfo)["fps_max_ui"], "30")
+
+    def test_lossy_row_is_explained_in_the_steps(self):
+        layered = cpu.overlay(profiles.get("balanced"))
+        self.assertIn("citadel_healthbars_enabled", " ".join(layered.manual_steps))
+
+    def test_cpu_command_marks_the_lossy_row(self):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            cli.cmd_cpu(argparse.Namespace(profile=None))
+        text = buffer.getvalue()
+        self.assertIn("citadel_healthbars_enabled", text)
+        self.assertIn("(costs information)", text)
+        self.assertIn("fps_max_ui", text)
+
+
+class ProfileKeyTests(unittest.TestCase):
+    def test_relief_key_resolves_to_the_overlay(self):
+        layered = profiles.get("balanced-cpu")
+        self.assertEqual(layered.key, "balanced-cpu")
+        self.assertEqual(
+            dict(layered.settings)["cl_simulate_dormant_entities"], "0"
+        )
+        self.assertEqual(dict(layered.settings)["fps_max_ui"], "30")
+
+    def test_every_profile_has_a_relief_key(self):
+        for key in list(profiles.PROFILES):
+            self.assertIn(key + cpu.SUFFIX, profiles.names())
+
+    def test_plain_keys_still_resolve(self):
+        for key in ("potato", "balanced", "quality", "optilock"):
+            self.assertEqual(profiles.get(key).key, key)
+
+    def test_double_suffix_is_rejected(self):
+        with self.assertRaises(KeyError):
+            profiles.get("balanced-cpu-cpu")
+
+    def test_unknown_key_still_raises(self):
+        with self.assertRaises(KeyError):
+            profiles.get("balanced-gpu")
+
+    def test_overlay_of_an_overlay_is_identity(self):
+        layered = profiles.get("balanced-cpu")
+        self.assertIs(cpu.overlay(layered), layered)
+
+    def test_resolving_the_relief_key_does_not_mutate_the_base(self):
+        before = tuple(profiles.get("potato").settings)
+        profiles.get("potato-cpu")
+        self.assertEqual(tuple(profiles.get("potato").settings), before)
+
+    def test_doctor_key_round_trips_through_install(self):
+        block = config.render_block(
+            cpu.overlay(profiles.get("balanced")), fps_cap=141
+        )
+        printed = config.block_profile(block)
+        self.assertEqual(printed, "balanced-cpu")
+        pasted_back = profiles.get(printed)
+        self.assertEqual(pasted_back.key, printed)
+        self.assertEqual(dict(pasted_back.settings)["fps_max_ui"], "30")
+
+    def test_cli_accepts_the_relief_key(self):
+        parser = cli.build_parser()
+        args = parser.parse_args(["install", "--profile", "balanced-cpu"])
+        self.assertEqual(args.profile, "balanced-cpu")
+        self.assertFalse(args.cpu_relief)
+
+    def test_flag_and_key_together_agree(self):
+        by_key = profiles.get("balanced-cpu")
+        by_flag = cpu.overlay(profiles.get("balanced"))
+        self.assertEqual(by_key.key, by_flag.key)
+        self.assertEqual(by_key.settings, by_flag.settings)
+        self.assertEqual(by_key.gameinfo, by_flag.gameinfo)
+
+
 if __name__ == "__main__":
     unittest.main()

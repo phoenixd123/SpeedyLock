@@ -32,25 +32,35 @@ from . import profiles
 
 SIMULATION = "simulation"
 EFFECTS = "effects"
+HUD = "hud"
 
 GROUP_LABELS = (
     (SIMULATION, "Simulation, every tick"),
     (EFFECTS, "Effects, particles and debris"),
+    (HUD, "HUD, which Panorama redraws every frame"),
 )
 
 SUFFIX = "-cpu"
 
 
 class Relief(object):
-    """One convar the relief overlay writes."""
+    """One convar the relief overlay writes.
 
-    __slots__ = ("name", "value", "group", "note")
+    ``lossy`` marks the rows that buy CPU by removing something you read during a
+    fight. They stay in the set -- hiding health bars is a legitimate choice on a
+    weak laptop -- but they are called out wherever the set is described, because
+    a config that quietly costs you information is the thing this project exists
+    to avoid.
+    """
 
-    def __init__(self, name, value, group, note):
+    __slots__ = ("name", "value", "group", "note", "lossy")
+
+    def __init__(self, name, value, group, note, lossy=False):
         self.name = name
         self.value = value
         self.group = group
         self.note = note
+        self.lossy = lossy
 
     def __repr__(self):
         return "Relief(%r, %r)" % (self.name, self.value)
@@ -129,6 +139,25 @@ RELIEF = (
         EFFECTS,
         "no per-effect dynamic lights",
     ),
+    Relief(
+        "fps_max_ui",
+        "30",
+        HUD,
+        "cap the Panorama HUD redraw, as the potato tier does",
+    ),
+    Relief(
+        "citadel_damage_text_lifetime",
+        "0.75",
+        HUD,
+        "fewer floating damage labels animating at once",
+    ),
+    Relief(
+        "citadel_healthbars_enabled",
+        "0",
+        HUD,
+        "no health bars above units; you lose that read at range",
+        lossy=True,
+    ),
 )
 
 #: Convars that are commonly sold as CPU tweaks and cannot help here, with the
@@ -179,8 +208,14 @@ NOT_WRITTEN = (
 RELIEF_STEP = (
     "CPU relief does not make the server simulate less -- the other lanes are "
     "ticked on Valve's machines. It stops your client doing work for effects, "
-    "bodies and props you are not looking at, and it is written to both "
-    "autoexec.cfg and the gameinfo ConVars block so a manager cannot undo it."
+    "bodies, props and HUD elements, and it is written to both autoexec.cfg and "
+    "the gameinfo ConVars block so a manager cannot undo it."
+)
+
+LOSSY_STEP = (
+    "The HUD part of the relief set is the only part that costs you information: "
+    "health bars above units are off. Set citadel_healthbars_enabled back to 1 if "
+    "you would rather keep them; `speedy uninstall` removes the whole set."
 )
 
 _VALUES = {row.name: row.value for row in RELIEF}
@@ -218,15 +253,24 @@ def overlay(profile):
 
     Nothing is mutated: ``profiles.PROFILES`` is shared module state, so a
     caller asking for relief must not leave the plain profile changed for the
-    next command in the same process.
+    next command in the same process. A profile that is already an overlay is
+    returned untouched, which is what makes ``--profile balanced-cpu`` and
+    ``--profile balanced --cpu-relief`` the same request.
     """
+    if is_relief_profile(profile.key):
+        return profile
+
+    steps = tuple(profile.manual_steps) + (RELIEF_STEP,)
+    if any(row.lossy for row in RELIEF):
+        steps += (LOSSY_STEP,)
+
     return profiles.Profile(
         key=profile.key + SUFFIX,
         title=profile.title + " + CPU relief",
         blurb=profile.blurb,
         settings=_without_relief(profile.settings) + list(_PAIRS),
         launch_options=profile.launch_options,
-        manual_steps=tuple(profile.manual_steps) + (RELIEF_STEP,),
+        manual_steps=steps,
         video=profile.video,
         gameinfo=_without_relief(profile.gameinfo) + list(_PAIRS),
     )
@@ -255,6 +299,10 @@ def explain():
         "The win shows up in teamfights, which is where that work spikes. If "
         "`speedy tune` says you are GPU-bound instead, this set will not help "
         "you -- cut pixels there, not simulation.",
+        "The HUD rows are the only lossy ones: capping the Panorama redraw and "
+        "shrinking damage-label lifetime cost you nothing you fight with, but "
+        "turning health bars off does, which is why `speedy cpu` marks it.",
         "This is opt-in because it is visible under load: cheaper effects, no "
-        "ragdolls, no debris. `speedy uninstall` puts it back.",
+        "ragdolls, no debris, less HUD. `speedy uninstall` puts it back, and so "
+        "does re-running `install` without the flag.",
     )

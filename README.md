@@ -241,6 +241,9 @@ and decoding the snapshot that lands sixty times a second.
 | `cl_particle_fallback_base` / `_multiplier` | `5` / `5` | matches the video profiles instead of disagreeing with them |
 | `cl_particle_sim_fallback_threshold_ms` | `0` | falls back to cheaper effects immediately |
 | `r_citadel_disable_particle_lights` | `1` | one dynamic light per effect |
+| `fps_max_ui` | `30` | caps the Panorama HUD redraw (the potato tier's value) |
+| `citadel_damage_text_lifetime` | `0.75` | fewer floating damage labels animating at once |
+| `citadel_healthbars_enabled` | `0` | health bars above units — **costs you that read** |
 
 ```bash
 python speedy.py cpu                        # what it writes, and what it refuses to
@@ -249,8 +252,26 @@ python speedy.py install --cpu-relief       # layer it on your profile
 ```
 
 It is opt-in because it is visible under load: cheaper effects, no ragdolls, no
-debris. Re-running `install` without the flag removes it again, and `doctor` says
-which block you are running.
+debris, a slower HUD. Re-running `install` without the flag removes it again, and
+`doctor` says which block you are running.
+
+Every profile also has a `-cpu` name of its own, so the two ways of asking are
+the same request:
+
+```bash
+python speedy.py install --profile balanced --cpu-relief
+python speedy.py install --profile balanced-cpu     # identical
+```
+
+That is deliberate: `doctor` reports the block it finds as `balanced-cpu`, and the
+key it prints pastes straight back into `install` rather than erroring out. Asking
+for `--profile balanced-cpu --cpu-relief` together is also fine, and does exactly
+what you would hope.
+
+The HUD rows are the only lossy ones. Capping the redraw and shortening the
+damage-label lifetime cost you nothing you fight with; turning off health bars
+does, which is why `speedy cpu` prints `(costs information)` next to it and the
+profile's notes say how to put just that row back (`citadel_healthbars_enabled 1`).
 
 ### What it cannot do, and what other configs get wrong
 
