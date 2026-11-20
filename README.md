@@ -96,6 +96,7 @@ python speedy.py uninstall  # restore everything from backups
 | `tune <capture>` | Diagnoses GPU- vs CPU-bound and applies the knobs that matter |
 | `convar [name]` | Explains a convar and whether SpeedyLock will write it |
 | `cpu` | What per-tick client CPU can be freed, and what cannot |
+| `release` | Build the 1.0 bundle for Grimoire / Deadlock Mod Manager |
 
 Flags: `--game-dir`, `--profile`, `--fps-cap N`, `--only autoexec|video|gameinfo`
 (repeatable), `--dry-run`, `--experimental`, `--cvarlist PATH`, `--cpu-relief`.
@@ -504,6 +505,51 @@ evidence, counts the addons, checks whether the Sinner's Light fix VPK is
 present when your mip bias needs it, and warns when another config in the same
 `ConVars` block defines a convar SpeedyLock also writes (ours are injected last,
 so ours win).
+
+## The 1.0 release bundle
+
+```bash
+python speedy.py release                        # dist/speedylock-1.0.0/ + .zip
+python speedy.py release --cpu-relief           # build it with the CPU relief set
+python speedy.py release --profile optilock --fps-cap 141
+```
+
+The built archive is committed at
+[`releases/speedylock-1.0.0.zip`](releases/speedylock-1.0.0.zip) — `balanced`, no
+cap, no relief — so there is something to hand someone without them cloning
+first. Rebuild it with any profile; the output is byte-identical for a given
+profile, so a diff means a real change.
+
+A folder and a zip of the same folder, shaped by what the two managers actually
+accept rather than by what looks tidy:
+
+| file | for |
+| --- | --- |
+| `install.bat` / `install.sh` | one step: backs up, merges all three files, prints doctor |
+| `uninstall.bat` | puts the backups back |
+| `autoexec.cfg` | Grimoire's Autoexec manager, and DMM's Import config |
+| `convars-block.txt` | every convar the install applies, as a paste-able `ConVars` block |
+| `mod-interchange.json` | DMM *Open export file…*, Grimoire *Import from file…* |
+| `README.md` | install guide for both managers, including what not to do |
+| `DOCUMENTATION.md` | this file |
+| `release-manifest.json` | SHA-256 and size of every file in the bundle |
+
+Two things in that table are the point. DMM's **Import config** accepts an
+archive, a `ConVars` block or `autoexec` lines and reviews what will apply before
+writing — that is the route a config tool belongs on, so the bundle feeds it
+`convars-block.txt` and the zip. And `mods[]` in the interchange document is
+**empty on purpose**: that format skips mods with no VPK on disk, so pretending
+to be one would import as nothing.
+
+The bundle ships no `.vpk`, and that is not an oversight. A VPK installs in both
+managers, but whether the engine resolves `cfg/` through the addon search path is
+undocumented, so it would appear in your library and possibly change nothing —
+while fighting the `gameinfo.gi` the manager rewrites each launch.
+
+Rebuilding is byte-identical: fixed zip timestamps, no generated dates in the
+manifest, so two builds of the same profile produce the same checksums and a
+mismatch means a file really changed. `release.verify()` walks the manifest, and
+the command exits non-zero if anything fails to match.
 
 ## Potato Lock: recommended, not bundled
 

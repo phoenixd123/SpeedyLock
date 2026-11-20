@@ -16,6 +16,7 @@ from . import (
     gamefiles,
     managers,
     profiles,
+    release,
     tune,
 )
 
@@ -855,6 +856,48 @@ def cmd_convar(args):
     return 0
 
 
+# --------------------------------------------------------------------- release
+
+
+def cmd_release(args):
+    """Build the bundle that a mod manager (or a person) can install from."""
+    out = Path(args.out).expanduser() if args.out else Path.cwd() / "dist"
+    key = args.profile or profiles.DEFAULT_PROFILE
+    profile = _with_relief(args, profiles.get(key))
+
+    _out("SpeedyLock %s -- release" % __version__)
+    _out()
+    try:
+        built = release.build(
+            out,
+            profile,
+            fps_cap=args.fps_cap,
+            experimental=args.experimental,
+            zip_it=not args.no_zip,
+        )
+    except OSError as exc:
+        _err("could not build the bundle: %s" % exc)
+        return 1
+
+    _out("  bundle    %s" % built.directory)
+    _out("  profile   %s  (%d commands)" % (built.profile.key, len(built.commands)))
+    if built.archive is not None:
+        size = built.archive.stat().st_size
+        _out("  archive   %s  (%d KB)" % (built.archive, max(1, round(size / 1024.0))))
+    problems = release.verify(built.directory)
+    if problems:
+        for problem in problems:
+            _err(problem)
+        return 1
+    _out("  manifest  %d files, checksums verified" % len(built.files))
+    _out()
+    _out("Grimoire:  Autoexec manager -> paste autoexec.cfg")
+    _out("DMM:       Mods Library -> Import config -> drop the archive or convars-block.txt")
+    _out("DMM alt:   Mods Library -> Open export file... -> mod-interchange.json")
+    _out("Installer: install.bat (Windows) or ./install.sh")
+    return 0
+
+
 # ------------------------------------------------------------------------- cpu
 
 
@@ -983,6 +1026,27 @@ def build_parser():
         "--out", help="output directory (default: dist/speedylock-<profile>)"
     )
     integrate.set_defaults(func=cmd_integrate)
+
+    release_parser = subparsers.add_parser(
+        "release", help="build the 1.0 bundle for Grimoire / Deadlock Mod Manager"
+    )
+    release_parser.add_argument(
+        "--out", help="output directory (default: ./dist)"
+    )
+    release_parser.add_argument(
+        "--profile", choices=profiles.names(), help="profile to build the bundle for"
+    )
+    release_parser.add_argument(
+        "--fps-cap", type=int, default=0, metavar="N", help="value for fps_max (0 = uncapped)"
+    )
+    release_parser.add_argument("--experimental", action="store_true")
+    release_parser.add_argument(
+        "--cpu-relief", action="store_true", help="build it with the CPU relief set"
+    )
+    release_parser.add_argument(
+        "--no-zip", action="store_true", help="leave the bundle as a folder only"
+    )
+    release_parser.set_defaults(func=cmd_release)
 
     cpu_parser = subparsers.add_parser(
         "cpu", help="what per-tick CPU can be freed, and what cannot"
